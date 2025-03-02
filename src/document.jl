@@ -254,11 +254,27 @@ function Base.write(filename::AbstractString, doc::Document)
     return Int(ret)
 end
 
-function make_read_callback()
+const GlobalIOMap = Dict{UInt,IO}()
+const GlobalIOMapCounter = Base.Threads.Atomic{UInt}(0)
+
+function try_free_callback(context::Union{UInt, Nothing})
+    if !isnothing(context)
+        delete!(GlobalIOMap, context)
+    end
+end
+
+function make_read_callback(input::IO)
+    # Store the input stream in the global map.
+    # Passing the io pointer as a context is not safe because the pointer may be
+    # invalid when the callback is called. 
+    # See 
+    id = Base.Threads.atomic_add!(GlobalIOMapCounter, UInt(1))
+    GlobalIOMap[id] = input
+
     # Passing an input stream as an argument is impossible to create a callback
     # because Julia does not support C-callable closures yet.
-    return @cfunction(Cint, (Ref{IO}, Ptr{UInt8}, Cint)) do context, buffer, len
-        input = context
+    return (id, @cfunction(Cint, (Cuint, Ptr{UInt8}, Cint)) do context, buffer, len
+        input = GlobalIOMap[UInt(context)]
         avail = min(bytesavailable(input), len)
         if avail > 0
             unsafe_read(input, buffer, avail)
@@ -274,7 +290,7 @@ function make_read_callback()
         # debug
         # @show unsafe_string(buffer, read)
         return Cint(read)
-    end
+    end)
 end
 
 

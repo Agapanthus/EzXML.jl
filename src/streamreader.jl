@@ -9,13 +9,15 @@ end
 A streaming XML reader type.
 """
 mutable struct StreamReader
-    ptr::Ptr{_TextReader}
-    input::Union{IO,Cvoid}
+	ptr::Ptr{_TextReader}
+	input::Union{IO, Cvoid}
+	context::Union{UInt, Nothing}
 
-    function StreamReader(ptr::Ptr{_TextReader}, input=nothing)
-        @assert ptr != C_NULL
-        return new(ptr, input)
-    end
+    function StreamReader(ptr::Ptr{_TextReader}, input = nothing, context::Union{UInt, Nothing} = nothing)
+		@assert ptr != C_NULL
+        @assert isnothing(context) || haskey(GlobalIOMap, context)
+		return new(ptr, input, context)
+	end
 end
 
 Base.propertynames(x::StreamReader) = (
@@ -140,18 +142,17 @@ function Base.string(x::ReaderType)
 end
 
 function StreamReader(input::IO)
-    readcb = make_read_callback()
-    closecb = C_NULL
-    context = input
-    uri = C_NULL
-    encoding = C_NULL
-    options = 0
-    reader_ptr = @check ccall(
-        (:xmlReaderForIO, libxml2),
-        Ptr{_TextReader},
-        (Ptr{Cvoid}, Ptr{Cvoid}, Ref{IO}, Cstring, Cstring, Cint),
-        readcb, closecb, context, uri, encoding, options) != C_NULL
-    return StreamReader(reader_ptr, input)
+    (context, readcb) = make_read_callback(input)
+	closecb = C_NULL
+	uri = C_NULL
+	encoding = C_NULL
+	options = 0
+	reader_ptr = @check ccall(
+		(:xmlReaderForIO, libxml2),
+		Ptr{_TextReader},
+        (Ptr{Cvoid}, Ptr{Cvoid}, Cuint, Cstring, Cstring, Cint),
+		readcb, closecb, context, uri, encoding, options) != C_NULL
+    return StreamReader(reader_ptr, input, context)
 end
 
 function Base.open(::Type{StreamReader}, filename::AbstractString)
@@ -175,6 +176,7 @@ function Base.close(reader::StreamReader)
     if reader.input isa IO
         close(reader.input)
     end
+    try_free_callback(reader.context)
     return nothing
 end
 
